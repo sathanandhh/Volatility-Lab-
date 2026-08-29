@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "volatility-mcp/schemas/feedback_result.json",
+  "title": "Feedback Result",
+  "description": "Output schema for feedback.get_next_action — the engine that drives the iterative workflow.",
+  "type": "object",
+  "required": ["recommended_action", "suggested_args", "rationale", "alternatives", "blocked_actions", "current_stage", "decision_count"],
+  "properties": {
+    "recommended_action": {
+      "type": "string",
+      "description": "Tool name of the recommended next call, e.g. 'models.fit'."
+    },
+    "suggested_args": {
+      "type": "object",
+      "description": "Suggested arguments to pass to the recommended action.",
+      "additionalProperties": true
+    },
+    "rationale": {
+      "type": "string",
+      "description": "One-sentence justification for the recommendation."
+    },
+    "alternatives": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["action", "args", "why"],
+        "properties": {
+          "action": {"type": "string"},
+          "args":   {"type": "object", "additionalProperties": true},
+          "why":    {"type": "string"}
+        }
+      }
+    },
+    "blocked_actions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["action", "reason"],
+        "properties": {
+          "action": {"type": "string"},
+          "reason": {"type": "string"}
+        }
+      }
+    },
+    "current_stage": {
+      "type": "string",
+      "enum": ["empty", "data", "preflight", "optimize", "fit", "compare", "risk", "backtest", "report"]
+    },
+    "decision_count": {"type": "integer"}
+  }
+}
+
+
+====================================================================================================
+END OF FLATTENED SOURCE — mcp_server/
+====================================================================================================

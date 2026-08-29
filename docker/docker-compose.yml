@@ -1,0 +1,53 @@
+# ── Volatility MCP — Docker Compose ─────────────────────────────────
+#
+# Usage:
+#   docker compose -f docker/docker-compose.yml up -d
+#   docker compose -f docker/docker-compose.yml logs -f
+#   docker compose -f docker/docker-compose.yml down
+#
+# Services:
+#   mcp  — The Volatility MCP server (SSE transport on :8765)
+#   redis — Optional Redis for multi-worker session cache (not used by default)
+
+services:
+  mcp:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: volatility-mcp
+    ports:
+      - "8765:8765"
+    environment:
+      - VOLMCP_DEFAULT_PROVIDER=yfinance
+      - VOLMCP_SESSION_BACKEND=sqlite
+      - VOLMCP_SESSION_DB=/data/volmcp_sessions.db
+      - VOLMCP_REPORT_DIR=/tmp/volmcp_reports
+      # Uncomment to use Alpha Vantage instead of yfinance:
+      # - VOLMCP_DEFAULT_PROVIDER=alpha_vantage
+      # - VOLMCP_ALPHA_VANTAGE_API_KEY=${ALPHA_VANTAGE_API_KEY}
+    volumes:
+      - mcp-data:/data
+      - mcp-reports:/tmp/volmcp_reports
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8765/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # ── Optional: Redis for multi-worker deployments ─────────────────
+  # Uncomment if running multiple MCP workers that need shared session state
+  # redis:
+  #   image: redis:7-alpine
+  #   container_name: volatility-redis
+  #   ports:
+  #     - "6379:6379"
+  #   volumes:
+  #     - redis-data:/data
+  #   restart: unless-stopped
+
+volumes:
+  mcp-data:
+  mcp-reports:
+  # redis-data:

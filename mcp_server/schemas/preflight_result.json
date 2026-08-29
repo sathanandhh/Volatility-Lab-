@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "volatility-mcp/schemas/preflight_result.json",
+  "title": "Pre-flight Gate Result",
+  "description": "Output schema for the preflight.run tool — aggregated result of 12 statistical checks run before any model is fit.",
+  "type": "object",
+  "required": ["overall", "checks", "recommendations", "next_actions"],
+  "properties": {
+    "overall": {
+      "type": "string",
+      "enum": ["pass", "warn", "block"],
+      "description": "Aggregate gate status. 'block' prevents models.fit unless force=true."
+    },
+    "checks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "status", "detail"],
+        "properties": {
+          "name":        {"type": "string"},
+          "status":      {"type": "string", "enum": ["pass", "warn", "block"]},
+          "detail":      {"type": "string"},
+          "statistic":   {"type": ["number", "null"]},
+          "p_value":     {"type": ["number", "null"]},
+          "threshold":   {"type": ["number", "string", "null"]},
+          "recommendation": {"type": ["string", "null"]}
+        }
+      }
+    },
+    "recommendations": {
+      "type": "array",
+      "items": {"type": "string"}
+    },
+    "next_actions": {
+      "type": "array",
+      "items": {"type": "string"},
+      "description": "Tool names valid as the next call, given this preflight result."
+    }
+  }
+}

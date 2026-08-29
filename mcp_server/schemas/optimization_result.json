@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "volatility-mcp/schemas/optimization_result.json",
+  "title": "Optimization Result",
+  "description": "Output schema for optimize.* tools — sweep results with the chosen optimum.",
+  "type": "object",
+  "required": ["kind", "optimal", "optimal_score", "criterion", "sweep", "recommendation", "next_actions"],
+  "properties": {
+    "kind": {
+      "type": "string",
+      "enum": ["order", "distribution", "mean", "window", "refit", "horizon"]
+    },
+    "optimal": {
+      "description": "The chosen optimum. Type varies by kind: dict for order, string for distribution/mean, int for window/refit/horizon."
+    },
+    "optimal_score": {"type": "number"},
+    "criterion":     {"type": "string"},
+    "sweep": {
+      "type": "array",
+      "description": "Full sweep table — each candidate with its score.",
+      "items": {"type": "object"}
+    },
+    "recommendation": {"type": "string"},
+    "next_actions":    {"type": "array", "items": {"type": "string"}}
+  }
+}

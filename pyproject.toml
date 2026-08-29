@@ -1,0 +1,108 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "volatility-mcp"
+version = "0.1.0"
+description = "MCP server for iterative volatility analytics: ARCH → EGARCH with pre-flight gates, input optimization, and a feedback loop"
+readme = "README.md"
+license = {text = "MIT"}
+authors = [
+    {name = "Volatility Analytics Lab", email = "info@github.com/volatility-analytics-lab"}
+]
+requires-python = ">=3.10"
+keywords = ["mcp", "volatility", "garch", "var", "expected-shortfall", "basel", "finance", "risk"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Financial and Insurance Industry",
+    "Intended Audience :: Education",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Office/Business :: Financial :: Investment",
+]
+
+dependencies = [
+    # MCP protocol
+    "mcp>=1.0,<2",
+    # Analytics
+    "arch>=7.2,<9",
+    "statsmodels>=0.14,<1",
+    "scipy>=1.13,<2",
+    "numpy>=1.26,<3",
+    "pandas>=2.2,<3",
+    # Data
+    "yfinance>=0.2.50,<2",
+    # Reporting
+    "xlsxwriter>=3.2,<4",
+    "plotly>=5.24,<7",
+    # Config
+    "pydantic>=2.6,<3",
+    "pydantic-settings>=2.2,<3",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0,<9",
+    "pytest-cov>=5.0,<6",
+    "pytest-asyncio>=0.23,<1",
+    "ruff>=0.5,<1",
+    "mypy>=1.10,<2",
+    "ipython>=8.20,<9",
+    "jupyter>=1.0,<2",
+]
+bayesian = [
+    "optuna>=3.6,<5",
+]
+pdf = [
+    "reportlab>=4.0,<5",
+]
+alpha_vantage = [
+    "alpha_vantage>=3.0,<4",
+]
+polygon = [
+    "requests>=2.31,<3",
+]
+kite = [
+    "kiteconnect>=5.0,<6",
+]
+all = [
+    "volatility-mcp[dev,bayesian,pdf,alpha_vantage,polygon,kite]",
+]
+
+[project.scripts]
+volatility-mcp = "mcp_server.server:main"
+
+[project.urls]
+Homepage = "https://github.com/volatility-analytics-lab
+Repository = "https://github.com/volatility-analytics-lab/volatility-mcp"
+Documentation = "https://github.com/volatility-analytics-lab/volatility-mcp/tree/main/docs"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["mcp_server*", "core*", "session_store*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v --tb=short"
+markers = [
+    "slow: marks tests as slow (deselect with '-k \"not slow\"')",
+    "integration: marks tests as integration tests",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP"]
+ignore = ["E501"]  # line length handled by formatter
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = false
+warn_unused_configs = true
+ignore_missing_imports = true

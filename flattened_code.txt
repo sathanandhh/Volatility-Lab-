@@ -1,0 +1,2324 @@
+====================================================================================================
+FLATTENED PROJECT SOURCE CODE
+====================================================================================================
+
+Project: volatility-mcp/examples + docs + docker + root config
+Files included: 21
+
+====================================================================================================
+
+
+####################################################################################################
+# FILE 1
+# PATH: README.md
+####################################################################################################
+
+# Volatility MCP
+
+An MCP (Model Context Protocol) server for iterative volatility analytics: ARCH → GARCH → GJR-GARCH → EGARCH, with pre-flight statistical gates, input optimization, VaR / Expected Shortfall, Basel backtesting, and a stateful feedback loop that guides an LLM agent through every stage of the analysis.
+
+> **Volatility Analytics Lab** · Finance · Risk · Analytics
+
+---
+
+## What this is
+
+A **feedback-driven** volatility analytics engine wrapped as an MCP server. An LLM agent (Claude, GPT, etc.) calls tools one at a time; each tool returns results **plus recommendations for the next step**. The agent iterates until diagnostics pass, backtests pass, and reports are generated.
+
+```
+data.load → preflight.run → optimize.* → models.fit → diagnostics.run
+    → compare.run → risk.var → backtest.rolling → backtest.coverage
+    → report.excel → feedback.explain_decision
+```
+
+### Three pillars
+
+| Pillar | What it does | Folder |
+|---|---|---|
+| **Pre-flight gates** | 12 statistical checks run BEFORE any model fit. If Engle ARCH-LM fails, GARCH is blocked. | `core/preflight/` |
+| **Input optimization** | `(p,q)`, distribution, window, refit frequency chosen by AIC/QLIKE — not by guesswork. | `core/optimize/` |
+| **Feedback loop** | Session state + workflow DAG + advisor. Every tool returns `next_actions[]`. | `core/feedback/` |
+
+---
+
+## Quick start
+
+```bash
+# Clone
+git clone https://github.com/volatility-analytics-lab/volatility-mcp.git
+cd volatility-mcp
+
+# Install
+python -m pip install -e ".[dev]"
+
+# Run tests
+make test
+
+# Start the MCP server (stdio transport)
+make run
+
+# Or SSE transport for remote access
+make run-sse
+```
+
+---
+
+## Connect from Claude Desktop
+
+Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "volatility": {
+      "command": "python",
+      "args": ["-m", "mcp_server.server"],
+      "cwd": "/path/to/volatility-mcp"
+    }
+  }
+}
+```
+
+Then ask Claude: *"Analyze Reliance Industries volatility using the volatility MCP server."*
+
+---
+
+## Tool surface (18 tools)
+
+| Category | Tools |
+|---|---|
+| Session | `open_session`, `close_session`, `get_session_state`, `list_sessions`, `reset_session` |
+| Data | `load_market`, `load_csv`, `list_universes`, `list_assets` |
+| Pre-flight | `run_preflight`, `get_gate_status`, `explain_gate` |
+| Optimize | `optimize_order`, `optimize_distribution`, `optimize_mean`, `optimize_window`, `optimize_refit`, `optimize_horizon` |
+| Models | `fit_model`, `forecast`, `list_models` |
+| Diagnostics | `run_diagnostics`, `get_diagnostics` |
+| Compare | `compare_models` |
+| Risk | `compute_var`, `compute_es`, `basel_es`, `portfolio_var` |
+| Scenario | `apply_market_shock`, `stressed_var`, `list_stress_scenarios` |
+| Backtest | `rolling_backtest`, `backtest_kupiec`, `backtest_christoffersen`, `backtest_traffic_light`, `backtest_dynamic_quantile`, `backtest_diebold_mariano`, `backtest_coverage_scorecard` |
+| Report | `build_excel`, `build_pdf`, `build_markdown` |
+| Feedback | `get_next_action`, `explain_decision`, `get_recommendations`, `list_valid_transitions` |
+
+See [docs/MCP_PROTOCOL.md](docs/MCP_PROTOCOL.md) for the full surface.
+
+---
+
+## Architecture
+
+```
+Presentation:  Streamlit · Claude Desktop · REST clients · Jupyter
+                              │ HTTP / stdio / SSE
+Protocol:       FastMCP server (tools · resources · prompts)
+                              │
+Engine:         core/  (preflight · diagnostics · models · optimize
+                        · risk · backtest · feedback · reporting)
+                              │
+Storage:        session_store/ (SQLite + parquet)
+Data:           yfinance · CSV · Alpha Vantage · Polygon · Kite
+```
+
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full layered design.
+
+---
+
+## Documentation
+
+| Doc | What it covers |
+|---|---|
+| [ARCHITECTURE.md](docs/ARCHITECTURE.md) | Layered architecture, data flow, scaling options |
+| [FEEDBACK_LOOP.md](docs/FEEDBACK_LOOP.md) | How the iterative workflow works |
+| [PREFLIGHT_CHECKS.md](docs/PREFLIGHT_CHECKS.md) | Every gate explained |
+| [INPUT_OPTIMIZATION.md](docs/INPUT_OPTIMIZATION.md) | How each input is tuned |
+| [MODEL_CATALOG.md](docs/MODEL_CATALOG.md) | When to use which model |
+| [TEST_CATALOG.md](docs/TEST_CATALOG.md) | Every statistical test |
+| [MCP_PROTOCOL.md](docs/MCP_PROTOCOL.md) | Tool/resource/prompt surface |
+| [DECISION_RULES.md](docs/DECISION_RULES.md) | Decision tree for model selection |
+
+---
+
+## License
+
+MIT — see [LICENSE](LICENSE).
+
+Educational use only. Market data may be delayed.Not investment advice.
+
+
+####################################################################################################
+# FILE 2
+# PATH: pyproject.toml
+####################################################################################################
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "volatility-mcp"
+version = "0.1.0"
+description = "MCP server for iterative volatility analytics: ARCH → EGARCH with pre-flight gates, input optimization, and a feedback loop"
+readme = "README.md"
+license = {text = "MIT"}
+authors = [
+    {name = "Volatility Analytics Lab", email = "info@github.com/volatility-analytics-lab"}
+]
+requires-python = ">=3.10"
+keywords = ["mcp", "volatility", "garch", "var", "expected-shortfall", "basel", "finance", "risk"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Financial and Insurance Industry",
+    "Intended Audience :: Education",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Office/Business :: Financial :: Investment",
+]
+
+dependencies = [
+    # MCP protocol
+    "mcp>=1.0,<2",
+    # Analytics
+    "arch>=7.2,<9",
+    "statsmodels>=0.14,<1",
+    "scipy>=1.13,<2",
+    "numpy>=1.26,<3",
+    "pandas>=2.2,<3",
+    # Data
+    "yfinance>=0.2.50,<2",
+    # Reporting
+    "xlsxwriter>=3.2,<4",
+    "plotly>=5.24,<7",
+    # Config
+    "pydantic>=2.6,<3",
+    "pydantic-settings>=2.2,<3",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0,<9",
+    "pytest-cov>=5.0,<6",
+    "pytest-asyncio>=0.23,<1",
+    "ruff>=0.5,<1",
+    "mypy>=1.10,<2",
+    "ipython>=8.20,<9",
+    "jupyter>=1.0,<2",
+]
+bayesian = [
+    "optuna>=3.6,<5",
+]
+pdf = [
+    "reportlab>=4.0,<5",
+]
+alpha_vantage = [
+    "alpha_vantage>=3.0,<4",
+]
+polygon = [
+    "requests>=2.31,<3",
+]
+kite = [
+    "kiteconnect>=5.0,<6",
+]
+all = [
+    "volatility-mcp[dev,bayesian,pdf,alpha_vantage,polygon,kite]",
+]
+
+[project.scripts]
+volatility-mcp = "mcp_server.server:main"
+
+[project.urls]
+Homepage = "https://github.com/volatility-analytics-lab
+Repository = "https://github.com/volatility-analytics-lab/volatility-mcp"
+Documentation = "https://github.com/volatility-analytics-lab/volatility-mcp/tree/main/docs"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["mcp_server*", "core*", "session_store*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v --tb=short"
+markers = [
+    "slow: marks tests as slow (deselect with '-k \"not slow\"')",
+    "integration: marks tests as integration tests",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP"]
+ignore = ["E501"]  # line length handled by formatter
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = false
+warn_unused_configs = true
+ignore_missing_imports = true
+
+
+####################################################################################################
+# FILE 3
+# PATH: .env.example
+####################################################################################################
+
+# ── Volatility MCP — Environment Configuration ─────────────────────
+# Copy to .env and adjust as needed.
+
+# ── Data Providers ──────────────────────────────────────────────────
+# Default provider for market data (yfinance | csv | alpha_vantage | polygon | kite)
+VOLMCP_DEFAULT_PROVIDER=yfinance
+
+# Alpha Vantage (free tier: https://www.alphavantage.co/support/#api-key)
+VOLMCP_ALPHA_VANTAGE_API_KEY=
+
+# Polygon.io (https://polygon.io/)
+VOLMCP_POLYGON_API_KEY=
+
+# Zerodha Kite (Indian markets — https://kite.trade/)
+VOLMCP_KITE_API_KEY=
+VOLMCP_KITE_ACCESS_TOKEN=
+
+# ── Cache TTLs (seconds) ───────────────────────────────────────────
+VOLMCP_PRICE_CACHE_TTL=3600
+VOLMCP_FIT_CACHE_TTL=3600
+
+# ── Model Fitting ───────────────────────────────────────────────────
+VOLMCP_DEFAULT_DISTRIBUTION=t
+VOLMCP_DEFAULT_MAXITER=1000
+
+# ── Reporting ──────────────────────────────────────────────────────
+VOLMCP_REPORT_DIR=/tmp/volmcp_reports
+
+# ── Session Storage ─────────────────────────────────────────────────
+# Backend: memory (default, in-process) | sqlite | duckdb
+VOLMCP_SESSION_BACKEND=memory
+VOLMCP_SESSION_DB=/tmp/volmcp_sessions.db
+
+# ── MCP Transport (for SSE / streamable-http) ───────────────────────
+# Set these when running with --transport sse
+VOLMCP_MCP_HOST=0.0.0.0
+VOLMCP_MCP_PORT=8765
+
+
+####################################################################################################
+# FILE 4
+# PATH: .gitignore
+####################################################################################################
+
+# ── Python ──────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+*.egg
+build/
+dist/
+.eggs/
+*.whl
+
+# ── Virtual environments ───────────────────────────────────────────
+.venv/
+venv/
+env/
+ENV/
+
+# ── IDE ─────────────────────────────────────────────────────────────
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# ── Testing ─────────────────────────────────────────────────────────
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.mypy_cache/
+.ruff_cache/
+
+# ── Runtime data ───────────────────────────────────────────────────
+*.db
+*.sqlite
+*.sqlite3
+*.duckdb
+/tmp/volmcp_*
+!session_store/migrations/*.sql
+
+# ── Reports ─────────────────────────────────────────────────────────
+*.xlsx
+*.pdf
+!docs/**/*.pdf
+
+# ── Jupyter ─────────────────────────────────────────────────────────
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# ── Environment ─────────────────────────────────────────────────────
+.env
+.env.local
+.env.*.local
+
+# ── Docker ──────────────────────────────────────────────────────────
+docker/data/
+
+# ── OS ─────────────────────────────────────────────────────────────
+Thumbs.db
+.DS_Store
+
+
+####################################################################################################
+# FILE 5
+# PATH: Makefile
+####################################################################################################
+
+# ── Volatility MCP — Makefile ───────────────────────────────────────
+# Common development tasks. Run `make help` for a list of targets.
+
+.PHONY: help install install-dev test test-fast lint format typecheck run run-sse docker-build docker-up docker-down clean
+
+help: ## Show this help
+	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | \
+		awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
+
+install: ## Install production dependencies
+	pip install -e .
+
+install-dev: ## Install dev dependencies (pytest, ruff, mypy, jupyter)
+	pip install -e ".[dev]"
+
+test: ## Run full test suite
+	pytest tests/ -v --tb=short
+
+test-fast: ## Run fast tests only (skip model fitting)
+	pytest tests/ -v -k "not arch_family and not order_selector and not integration" --tb=short
+
+test-cov: ## Run tests with coverage
+	pytest tests/ --cov=core --cov=session_store --cov=mcp_server --cov-report=term-missing
+
+lint: ## Lint with ruff
+	ruff check . --fix
+
+format: ## Format with ruff
+	ruff format .
+
+typecheck: ## Type-check with mypy
+	mypy mcp_server/ core/ --ignore-missing-imports
+
+run: ## Start MCP server (stdio transport — for Claude Desktop)
+	python -m mcp_server.server --transport stdio
+
+run-sse: ## Start MCP server (SSE transport — for remote access)
+	python -m mcp_server.server --transport sse --host 0.0.0.0 --port 8765
+
+run-http: ## Start MCP server (streamable-http)
+	python -m mcp_server.server --transport streamable-http --host 0.0.0.0 --port 8765
+
+docker-build: ## Build Docker image
+	docker build -t volatility-mcp:latest -f docker/Dockerfile .
+
+docker-up: ## Start all services via docker-compose
+	docker compose -f docker/docker-compose.yml up -d
+
+docker-down: ## Stop all docker services
+	docker compose -f docker/docker-compose.yml down
+
+clean: ## Remove build artifacts and caches
+	rm -rf build/ dist/ *.egg-info .pytest_cache .mypy_cache .ruff_cache
+	find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
+	find . -name "*.pyc" -delete
+
+
+####################################################################################################
+# FILE 6
+# PATH: LICENSE
+####################################################################################################
+
+MIT License
+
+Copyright (c) 2026 Volatility Analytics Lab
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+---
+
+Educational use only. Market data may be delayed., revised, or temporarily
+unavailable. Results are descriptive evidence, not investment advice or
+trading signals.
+
+
+####################################################################################################
+# FILE 7
+# PATH: examples/01_basic_flow.py
+####################################################################################################
+
+#!/usr/bin/env python3
+"""Example 1 — Basic volatility analysis flow.
+
+Demonstrates the simplest end-to-end workflow using the core engine
+directly (no MCP transport):
+
+    data.load → preflight.run → optimize.order → models.fit
+    → models.forecast → risk.compute_var
+
+Run:
+    python examples/01_basic_flow.py
+"""
+from __future__ import annotations
+
+import math
+
+import numpy as np
+import pandas as pd
+
+from core.data.service import DataService
+from core.preflight.orchestrator import PreflightOrchestrator
+from core.preflight.gates import GateStatus
+from core.optimize.order_selector import select_order
+from core.models.univariate.arch_family import (
+    fit_arch_family, forecast_arch_family,
+)
+from core.risk.var.parametric import var_student_t
+from core.risk.es.expected_shortfall import es_student_t
+
+
+def main() -> None:
+    print("=" * 70)
+    print("EXAMPLE 1 · Basic Volatility Analysis Flow")
+    print("=" * 70)
+
+    # ── Step 1: Load market data ────────────────────────────────────
+    print("\n1. Loading Reliance Industries (5 years daily)...")
+    service = DataService.from_env()
+    prices = service.download_prices("RELIANCE.NS", years=5)
+    close, returns = service.prepare_returns(prices, frequency="Daily")
+    print(f"   Loaded {len(returns)} observations "
+          f"({returns.index[0].date()} to {returns.index[-1].date()})")
+    print(f"   Annualized volatility: {returns.std() * math.sqrt(252) * 100:.2f}%")
+
+    # ── Step 2: Run pre-flight checks ────────────────────────────────
+    print("\n2. Running pre-flight gates...")
+    orch = PreflightOrchestrator()
+    gate = orch.run(returns)
+    print(f"   Overall status: {gate.overall.value}")
+    for c in gate.checks:
+        symbol = {"pass": "✓", "warn": "⚠", "block": "✗"}.get(c.status.value, "?")
+        print(f"   {symbol} {c.name:30s} {c.detail}")
+    if gate.overall == GateStatus.BLOCK:
+        print("\n   ⛔ Preflight blocked — GARCH is not justified for this data.")
+        print("   Recommendations:")
+        for r in gate.recommendations:
+            print(f"     → {r}")
+        return
+
+    # ── Step 3: Optimize (p, q) orders ──────────────────────────────
+    print("\n3. Optimizing (p, q) by AIC...")
+    order = select_order(returns, family="GARCH", max_p=3, max_q=2,
+                          distribution="t")
+    print(f"   Optimal: p={order.optimal['p']}, q={order.optimal['q']} "
+          f"(AIC={order.optimal_score:.1f})")
+    print(f"   {order.recommendation}")
+
+    # ── Step 4: Fit GARCH ────────────────────────────────────────────
+    print("\n4. Fitting GARCH(1,1) with Student-t innovations...")
+    fit = fit_arch_family(
+        returns, family="GARCH",
+        p=order.optimal["p"], q=order.optimal["q"], o=0,
+        distribution="t", mean="Constant",
+    )
+    print(f"   Converged: {fit.converged}")
+    print(f"   AIC: {fit.aic:.1f}  BIC: {fit.bic:.1f}")
+    print(f"   Parameters:")
+    for k, v in fit.params.items():
+        print(f"     {k:15s} = {v:.5f}")
+    print(f"   Latest conditional volatility: {fit.next_vol:.4f}%")
+
+    # ── Step 5: Forecast 10-day volatility ───────────────────────────
+    print("\n5. Forecasting 10-day volatility path...")
+    forecast = forecast_arch_family(fit, horizon=10, method="analytic")
+    print(f"   Method: {forecast.method}")
+    print(f"   Day 1 vol: {math.sqrt(forecast.variance_path[0]) * 100:.3f}%")
+    print(f"   Day 10 vol: {math.sqrt(forecast.variance_path[-1]) * 100:.3f}%")
+    avg_vol = math.sqrt(sum(forecast.variance_path) / len(forecast.variance_path))
+    print(f"   10-day avg vol: {avg_vol * 100:.3f}%")
+
+    # ── Step 6: Compute VaR and ES ───────────────────────────────────
+    print("\n6. Computing 97.5% one-day VaR and ES...")
+    alpha = 0.025
+    sigma = math.sqrt(forecast.variance_path[0])
+    nu = float(fit.params.get("nu", 8.0))
+    portfolio = 1_000_000  # ₹10 lakh portfolio
+
+    var_rate = var_student_t(0, sigma, alpha, nu)
+    es_rate = es_student_t(0, sigma, alpha, nu)
+    var_currency = portfolio * abs(var_rate)
+    es_currency = portfolio * abs(es_rate)
+
+    print(f"   σ (1-day): {sigma * 100:.3f}%")
+    print(f"   ν (Student-t df): {nu:.2f}")
+    print(f"   VaR (97.5%): ₹{var_currency:,.0f} ({var_rate * 100:.3f}%)")
+    print(f"   ES  (97.5%): ₹{es_currency:,.0f} ({es_rate * 100:.3f}%)")
+    print(f"   ES/VaR ratio: {abs(es_rate / var_rate):.2f}× "
+          f"(> 1.3 indicates heavy tail)")
+
+    print("\n" + "=" * 70)
+    print("Done. This is a basic flow — see example 02 for the feedback loop.")
+    print("=" * 70)
+
+
+if __name__ == "__main__":
+    main()
+
+
+####################################################################################################
+# FILE 8
+# PATH: examples/02_feedback_loop_demo.py
+####################################################################################################
+
+#!/usr/bin/env python3
+"""Example 2 — Full feedback-loop-driven analysis.
+
+Demonstrates the iterative workflow that the MCP server drives:
+each step checks diagnostics, and if they fail, the loop returns to
+optimize or fit with a different specification.
+
+    preflight → optimize → fit → diagnostics
+        → if fail: re-optimize → re-fit → re-diagnostics
+        → compare → risk → backtest
+        → if fail: re-tune refit → re-backtest
+        → report
+
+Run:
+    python examples/02_feedback_loop_demo.py
+"""
+from __future__ import annotations
+
+import math
+import sys
+from typing import Any
+
+import numpy as np
+import pandas as pd
+
+from core.data.service import DataService
+from core.feedback.session import Session
+from core.feedback.advisor import recommend_next_action
+from core.preflight.orchestrator import PreflightOrchestrator
+from core.preflight.gates import GateStatus
+from core.optimize.order_selector import select_order
+from core.optimize.distribution_selector import select_distribution
+from core.optimize.refit_selector import select_refit_frequency
+from core.models.univariate.arch_family import (
+    fit_arch_family, forecast_arch_family,
+)
+from core.diagnostics.residual import ljung_box
+from core.diagnostics.arch_lm import arch_lm_test
+from core.diagnostics.accuracy import qlike
+from core.risk.var.parametric import var_student_t
+from core.backtest.rolling import rolling_backtest
+from core.backtest.coverage import coverage_scorecard
+from core.reporting.markdown import build_markdown_report
+
+
+def main() -> None:
+    print("=" * 70)
+    print("EXAMPLE 2 · Feedback Loop Demo")
+    print("=" * 70)
+
+    # ── Initialize session ───────────────────────────────────────────
+    session = Session(id="demo-feedback-001")
+
+    # ── Step 1: Load data ────────────────────────────────────────────
+    print("\n── Step 1: Load data ─────────────────────────────────────")
+    service = DataService.from_env()
+    prices = service.download_prices("^NSEI", years=5)
+    close, returns = service.prepare_returns(prices, frequency="Daily")
+    session.returns = returns
+    session.metadata = {"ticker": "^NSEI", "frequency": "Daily"}
+    session.advance_stage("data")
+    session.log_decision("data.load", "^NSEI", "loaded",
+                         detail=f"{len(returns)} obs")
+    print(f"   Loaded {len(returns)} observations")
+
+    # ── Step 2: Advisor recommends preflight ────────────────────────
+    print("\n── Step 2: Advisor recommends next action ────────────────")
+    rec = recommend_next_action(session)
+    print(f"   → {rec.action}: {rec.rationale}")
+    assert rec.action == "preflight.run"
+
+    # ── Step 3: Run preflight ────────────────────────────────────────
+    print("\n── Step 3: Run pre-flight gates ─────────────────────────")
+    orch = PreflightOrchestrator()
+    gate = orch.run(returns)
+    session.preflight_result = gate
+    session.advance_stage("preflight")
+    session.log_decision("preflight.run", "n/a", gate.overall.value,
+                         detail=f"{len(gate.checks)} checks")
+    print(f"   Overall: {gate.overall.value}")
+    for c in gate.checks:
+        sym = {"pass": "✓", "warn": "⚠", "block": "✗"}.get(c.status.value, "?")
+        print(f"   {sym} {c.name}")
+    if gate.overall == GateStatus.BLOCK:
+        print("\n   ⛔ Blocked — cannot proceed with GARCH.")
+        return
+
+    # ── Step 4: Optimize inputs ──────────────────────────────────────
+    print("\n── Step 4: Optimize (p, q) and distribution ─────────────")
+    order = select_order(returns, family="GARCH", max_p=3, max_q=2,
+                         distribution="t")
+    session.optimization_results["order"] = order
+    print(f"   Order: p={order.optimal['p']}, q={order.optimal['q']} "
+          f"(AIC={order.optimal_score:.1f})")
+
+    dist = select_distribution(returns, family="GARCH",
+                               p=order.optimal["p"], q=order.optimal["q"],
+                               candidates=["normal", "t"])
+    session.optimization_results["distribution"] = dist
+    print(f"   Distribution: {dist.optimal} (AIC={dist.optimal_score:.1f})")
+    session.advance_stage("optimize")
+
+    # ── Step 5: Fit model ─ (feedback loop starts here) ─────────────
+    max_iterations = 5
+    for iteration in range(1, max_iterations + 1):
+        print(f"\n── Step 5: Fit GARCH (iteration {iteration}) ──────────")
+        fit = fit_arch_family(
+            returns, family="GARCH",
+            p=order.optimal["p"], q=order.optimal["q"], o=0,
+            distribution=dist.optimal, mean="Constant",
+        )
+        session.fitted_models[f"GARCH_iter{iteration}"] = fit
+        session.advance_stage("fit")
+        session.log_decision("models.fit", "GARCH", "fitted",
+                             detail=f"iter={iteration}, AIC={fit.aic:.1f}")
+        print(f"   Converged: {fit.converged}, AIC: {fit.aic:.1f}")
+
+        # ── Step 6: Run diagnostics ────────────────────────────────
+        print(f"   Running diagnostics...")
+        lb_sq = ljung_box(fit.std_resid.pow(2), lag=10)
+        arch = arch_lm_test(fit.std_resid, nlags=10)
+        print(f"   LB(r²) p={lb_sq['p_value']:.4f} "
+              f"({'PASS' if lb_sq['p_value'] >= 0.05 else 'FAIL'})")
+        print(f"   ARCH-LM p={arch['p_value']:.4f} "
+              f"({'PASS' if arch['p_value'] >= 0.05 else 'FAIL'})")
+
+        if lb_sq["p_value"] >= 0.05 and arch["p_value"] >= 0.05:
+            print("   ✓ Diagnostics passed — proceeding to risk & backtest.")
+            break
+
+        # ── Feedback: diagnostics failed → re-optimize ─────────────
+        if lb_sq["p_value"] < 0.05:
+            print("   ⚠ Remaining ARCH effect — increasing q...")
+            new_q = min(order.optimal["q"] + 1, 3)
+            order = select_order(returns, family="GARCH", max_p=3,
+                                 max_q=new_q + 1, distribution=dist.optimal)
+            session.optimization_results["order"] = order
+            print(f"      New optimum: p={order.optimal['p']}, "
+                  f"q={order.optimal['q']}")
+
+        if arch["p_value"] < 0.05 and iteration > 1:
+            print("   ⚠ ARCH-LM still failing — switching to EGARCH...")
+            fit = fit_arch_family(
+                returns, family="EGARCH",
+                p=1, q=1, o=1,
+                distribution=dist.optimal, mean="Constant",
+            )
+            session.fitted_models["EGARCH"] = fit
+            session.log_decision("models.fit", "EGARCH", "fitted",
+                                 detail=f"AIC={fit.aic:.1f}")
+            arch2 = arch_lm_test(fit.std_resid, nlags=10)
+            print(f"   EGARCH ARCH-LM p={arch2['p_value']:.4f}")
+            if arch2["p_value"] >= 0.05:
+                print("   ✓ EGARCH passed — using it.")
+                fit = session.fitted_models["EGARCH"]
+                break
+    else:
+        print(f"\n   ⚠ Max iterations ({max_iterations}) reached — "
+              "proceeding with best fit.")
+
+    # ── Step 7: Compute VaR ─────────────────────────────────────────
+    print("\n── Step 7: Compute 97.5% VaR ─────────────────────────────")
+    forecast = forecast_arch_family(fit, horizon=1, method="analytic")
+    sigma = math.sqrt(forecast.variance_path[0])
+    nu = float(fit.params.get("nu", 8.0))
+    alpha = 0.025
+    var_rate = var_student_t(0, sigma, alpha, nu)
+    portfolio = 1_000_000
+    print(f"   1-day σ: {sigma * 100:.3f}%")
+    print(f"   97.5% VaR: ₹{portfolio * abs(var_rate):,.0f}")
+    session.risk_results["var"] = {
+        "var_return_pct": var_rate * 100,
+        "var_currency": portfolio * abs(var_rate),
+    }
+    session.advance_stage("risk")
+
+    # ── Step 8: Backtest ─ (feedback loop continues) ─────────────────
+    print("\n── Step 8: Rolling backtest ───────────────────────────────")
+    print("   Optimizing refit frequency...")
+    refit = select_refit_frequency(returns, model_name="GARCH",
+                                   min_freq=5, max_freq=20, alpha=alpha)
+    session.optimization_results["refit"] = refit
+    print(f"   Optimal refit: every {refit.optimal} obs "
+          f"(CC p={refit.optimal_score:.3f})")
+
+    print("   Running walk-forward backtest...")
+    bt = rolling_backtest(
+        returns, model_names=("GARCH",), distribution="t",
+        train_size=int(len(returns) * 0.8), alpha=alpha,
+        refit_every=refit.optimal,
+    )
+    session.backtest_results = {m: bt.for_model(m) for m in ("GARCH",)}
+    session.advance_stage("backtest")
+
+    # ── Step 9: Coverage scorecard ──────────────────────────────────
+    print("\n── Step 9: Coverage scorecard ────────────────────────────")
+    scorecard = coverage_scorecard(session.backtest_results, alpha=alpha)
+    session.coverage_scorecard = scorecard
+    for row in scorecard:
+        print(f"   {row['model']}: {row['verdict'].upper()}")
+        print(f"     Breaches: {row['breaches']}, "
+              f"Kupiec p={row['kupiec_p']:.3f}, "
+              f"CC p={row['conditional_coverage_p']:.3f}, "
+              f"Zone: {row['traffic_light_zone']}")
+
+        if row["verdict"] == "review":
+            print("   ⚠ Backtest failed — would recommend re-tuning "
+                  "in a real session.")
+
+    # ── Step 10: Generate report ─────────────────────────────────────
+    print("\n── Step 10: Generate Markdown report ────────────────────")
+    session.advance_stage("report")
+    md = build_markdown_report(session)
+    print(f"   Report length: {len(md)} characters")
+    print(f"   First 200 chars:\n   {md[:200]}...")
+
+    # ── Step 11: Decision audit trail ───────────────────────────────
+    print(f"\n── Step 11: Decision audit trail "
+          f"({len(session.decision_log)} decisions) ──────")
+    for e in session.decision_log.entries:
+        print(f"   #{e.id} {e.action:25s} → {e.outcome}")
+
+    # ── Final advisor recommendation ────────────────────────────────
+    print("\n── Final advisor recommendation ──────────────────────────")
+    final_rec = recommend_next_action(session)
+    print(f"   → {final_rec.action}: {final_rec.rationale}")
+
+    print("\n" + "=" * 70)
+    print("Feedback loop demo complete.")
+    print("=" * 70)
+
+
+if __name__ == "__main__":
+    main()
+
+
+####################################################################################################
+# FILE 9
+# PATH: examples/03_optimization_walkthrough.py
+####################################################################################################
+
+#!/usr/bin/env python3
+"""Example 3 — Input optimization walkthrough.
+
+Shows every optimizer in action and explains why each optimum was
+chosen by referencing the AIC/QLIKE/LB sweep tables.
+
+    optimize.order → optimize.distribution → optimize.mean
+    → optimize.window → optimize.refit → optimize.horizon
+
+Run:
+    python examples/03_optimization_walkthrough.py
+"""
+from __future__ import annotations
+
+import math
+
+import numpy as np
+import pandas as pd
+
+from core.data.service import DataService
+from core.optimize.order_selector import select_order
+from core.optimize.distribution_selector import select_distribution
+from core.optimize.mean_selector import select_mean
+from core.optimize.window_selector import select_window
+from core.optimize.refit_selector import select_refit_frequency
+from core.optimize.horizon_selector import select_horizon
+from core.optimize.heuristics import get_heuristic
+
+
+def main() -> None:
+    print("=" * 70)
+    print("EXAMPLE 3 · Input Optimization Walkthrough")
+    print("=" * 70)
+
+    # Load data
+    service = DataService.from_env()
+    prices = service.download_prices("RELIANCE.NS", years=5)
+    close, returns = service.prepare_returns(prices, frequency="Daily")
+    print(f"\nLoaded {len(returns)} daily returns "
+          f"({returns.index[0].date()} to {returns.index[-1].date()})")
+
+    # ── 1. Order (p, q) selection ────────────────────────────────────
+    print("\n" + "─" * 70)
+    print("1. ORDER SELECTION — sweep (p, q) by AIC")
+    print("─" * 70)
+    print(f"\n   Heuristic: {get_heuristic('aic_delta')}")
+    order = select_order(returns, family="GARCH", max_p=3, max_q=2,
+                         distribution="t", criterion="AIC")
+    print(f"\n   Optimal: p={order.optimal['p']}, q={order.optimal['q']} "
+          f"(AIC={order.optimal_score:.1f})")
+    print(f"   {order.recommendation}")
+    print("\n   Full sweep table:")
+    print(f"   {'p':>3s} {'q':>3s} {'AIC':>12s} {'Converged':>10s}")
+    for row in order.sweep_table:
+        print(f"   {row['p']:>3d} {row['q']:>3d} "
+              f"{row['score']:>12.1f} {str(row.get('converged', '?')):>10s}")
+
+    # ── 2. Distribution selection ────────────────────────────────────
+    print("\n" + "─" * 70)
+    print("2. DISTRIBUTION SELECTION — sweep by AIC")
+    print("─" * 70)
+    print(f"\n   Heuristic: {get_heuristic('distribution_when_normality_blocked')}")
+    dist = select_distribution(returns, family="GARCH", p=1, q=1,
+                               candidates=["normal", "t", "ged"])
+    print(f"\n   Optimal: {dist.optimal} (AIC={dist.optimal_score:.1f})")
+    print(f"   {dist.recommendation}")
+    print("\n   Full sweep table:")
+    print(f"   {'Distribution':>15s} {'AIC':>12s} {'Converged':>10s}")
+    for row in dist.sweep_table:
+        print(f"   {row['distribution']:>15s} {row['aic']:>12.1f} "
+              f"{str(row.get('converged', '?')):>10s}")
+
+    # ── 3. Mean specification ────────────────────────────────────────
+    print("\n" + "─" * 70)
+    print("3. MEAN SPECIFICATION — sweep by residual Ljung-Box p")
+    print("─" * 70)
+    mean = select_mean(returns, candidates=["Constant", "AR(1)", "ARMA(1,1)"])
+    print(f"\n   Optimal: {mean.optimal} (LB p={mean.optimal_score:.3f})")
+    print(f"   {mean.recommendation}")
+    print("\n   Full sweep table:")
+    print(f"   {'Spec':>15s} {'LB p-value':>12s}")
+    for row in mean.sweep_table:
+        print(f"   {row['spec']:>15s} {row['p_value']:>12.3f}")
+
+    # ── 4. Rolling window selection ──────────────────────────────────
+    print("\n" + "─" * 70)
+    print("4. ROLLING WINDOW — sweep by out-of-sample QLIKE")
+    print("─" * 70)
+    print(f"\n   Heuristic: {get_heuristic('qlike_preference')}")
+    window = select_window(returns, min_window=10, max_window=63,
+                           step=5, metric="QLIKE")
+    print(f"\n   Optimal: {window.optimal} days (QLIKE={window.optimal_score:.4f})")
+    print(f"   {window.recommendation}")
+    print("\n   Full sweep table:")
+    print(f"   {'Window':>8s} {'QLIKE':>12s}")
+    for row in window.sweep_table:
+        print(f"   {row['window']:>8d} {row['score']:>12.4f}")
+
+    # ── 5. Refit frequency ───────────────────────────────────────────
+    print("\n" + "─" * 70)
+    print("5. REFIT FREQUENCY — sweep by conditional-coverage p-value")
+    print("─" * 70)
+    print(f"\n   Heuristic: {get_heuristic('refit_tradeoff')}")
+    refit = select_refit_frequency(returns, model_name="GARCH",
+                                   min_freq=5, max_freq=25, alpha=0.025)
+    print(f"\n   Optimal: every {refit.optimal} obs (CC p={refit.optimal_score:.3f})")
+    print(f"   {refit.recommendation}")
+    print("\n   Full sweep table:")
+    print(f"   {'Refit':>8s} {'CC p':>10s}")
+    for row in refit.sweep_table:
+        print(f"   {row['refit_every']:>8d} {row['cc_p']:>10.3f}")
+
+    # ── 6. Horizon recommendation ────────────────────────────────────
+    print("\n" + "─" * 70)
+    print("6. FORECAST HORIZON — by use case")
+    print("─" * 70)
+    for use_case in ["regulatory", "weekly", "monthly", "stress", "auto"]:
+        h = select_horizon(returns, target_use=use_case)
+        print(f"   {use_case:>15s}: {h.optimal} periods — {h.recommendation}")
+
+    print("\n" + "=" * 70)
+    print("Optimization walkthrough complete.")
+    print("=" * 70)
+
+
+if __name__ == "__main__":
+    main()
+
+
+####################################################################################################
+# FILE 10
+# PATH: examples/notebooks/mcp_client_demo.ipynb
+####################################################################################################
+
+{
+ "cells": [
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "# Volatility MCP — Client Demo\n",
+    "\n",
+    "This notebook shows how to connect to the Volatility MCP server as a client,\n",
+    "call tools, and follow the feedback loop programmatically.\n",
+    "\n",
+    "**Prerequisites:**\n",
+    "```bash\n",
+    "pip install mcp\n",
+    "python -m mcp_server.server --transport sse --port 8765 &\n",
+    "```"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Connect to the MCP server (SSE transport)\n",
+    "import asyncio\n",
+    "from mcp import ClientSession, SseServerParameters\n",
+    "from mcp.client.sse import sse_client\n",
+    "\n",
+    "async def connect():\n",
+    "    params = SseServerParameters(\n",
+    "        url='http://localhost:8765/sse',\n",
+    "    )\n",
+    "    async with sse_client(params) as (read, write):\n",
+    "        async with ClientSession(read, write) as session:\n",
+    "            await session.initialize()\n",
+    "            \n",
+    "            # List available tools\n",
+    "            tools = await session.list_tools()\n",
+    "            print(f'Available tools: {len(tools.tools)}')\n",
+    "            for t in tools.tools[:5]:\n",
+    "                print(f'  - {t.name}: {t.description[:80]}...')\n",
+    "            print('  ...')\n",
+    "            \n",
+    "            return session\n",
+    "\n",
+    "session = await connect()"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "## 1. Open a session and load data"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Open a session\n",
+    "result = await session.call_tool('open_session', {})\n",
+    "session_id = result.content[0].text.split('\"session_id\": \"')[1].split('\"')[0]\n",
+    "print(f'Session ID: {session_id}')\n",
+    "\n",
+    "# Load NIFTY 50 data\n",
+    "result = await session.call_tool('load_market', {\n",
+    "    'session_id': session_id,\n",
+    "    'ticker': '^NSEI',\n",
+    "    'years': 5,\n",
+    "    'frequency': 'Daily',\n",
+    "})\n",
+    "print(result.content[0].text)"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "## 2. Run pre-flight checks"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "result = await session.call_tool('run_preflight', {\n",
+    "    'session_id': session_id,\n",
+    "})\n",
+    "print(result.content[0].text[:500])"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "## 3. Ask the advisor what to do next"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "result = await session.call_tool('get_next_action', {\n",
+    "    'session_id': session_id,\n",
+    "})\n",
+    "print(result.content[0].text)"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "## 4. Optimize, fit, and compute VaR — following the advisor"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Optimize order\n",
+    "result = await session.call_tool('optimize_order', {\n",
+    "    'session_id': session_id,\n",
+    "    'model_family': 'GARCH',\n",
+    "    'max_p': 2,\n",
+    "    'max_q': 1,\n",
+    "})\n",
+    "print('Order optimized')\n",
+    "\n",
+    "# Fit GARCH\n",
+    "result = await session.call_tool('fit_model', {\n",
+    "    'session_id': session_id,\n",
+    "    'model': 'GARCH',\n",
+    "})\n",
+    "print(result.content[0].text[:300])\n",
+    "\n",
+    "# Compute VaR\n",
+    "result = await session.call_tool('compute_var', {\n",
+    "    'session_id': session_id,\n",
+    "    'model': 'GARCH',\n",
+    "    'confidence': 0.975,\n",
+    "    'method': 'student_t',\n",
+    "    'portfolio_value': 1000000,\n",
+    "})\n",
+    "print(result.content[0].text[:300])"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "## 5. Generate a Markdown report"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "result = await session.call_tool('build_markdown', {\n",
+    "    'session_id': session_id,\n",
+    "})\n",
+    "report = result.content[0].text\n",
+    "print(f'Report length: {len(report)} chars')\n",
+    "print(report[:500])"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "## 6. View the full decision audit trail"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "result = await session.call_tool('explain_decision', {\n",
+    "    'session_id': session_id,\n",
+    "})\n",
+    "print(result.content[0].text[:500])"
+   ]
+  }
+ ],
+ "metadata": {
+  "kernelspec": {
+   "display_name": "Python 3",
+   "language": "python",
+   "name": "python3"
+  },
+  "language_info": {
+   "name": "python",
+   "version": "3.10.0"
+  }
+ },
+ "nbformat": 4,
+ "nbformat_minor": 5
+}
+
+
+####################################################################################################
+# FILE 11
+# PATH: docker/Dockerfile
+####################################################################################################
+
+# ── Volatility MCP — Multi-stage Dockerfile ─────────────────────────
+# Build:  docker build -t volatility-mcp:latest -f docker/Dockerfile .
+# Run:    docker run -p 8765:8765 volatility-mcp:latest --transport sse
+
+# ── Stage 1: Build ──────────────────────────────────────────────────
+FROM python:3.12-slim AS builder
+
+WORKDIR /build
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc g++ libffi-dev && \
+    rm -rf /var/lib/apt/lists/*
+
+# Copy project files
+COPY pyproject.toml README.md ./
+COPY mcp_server/ ./mcp_server/
+COPY core/ ./core/
+COPY session_store/ ./session_store/
+
+# Install dependencies to a separate prefix for later copy
+RUN pip install --no-cache-dir --prefix=/install -e ".[pdf]"
+
+# ── Stage 2: Runtime ────────────────────────────────────────────────
+FROM python:3.12-slim AS runtime
+
+# Install runtime system deps
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl && \
+    rm -rf /var/lib/apt/lists/*
+
+# Copy installed Python packages from builder
+COPY --from=builder /install /usr/local
+
+# Copy application code
+COPY --from=builder /build/mcp_server /app/mcp_server
+COPY --from=builder /build/core /app/core
+COPY --from=builder /build/session_store /app/session_store
+COPY --from=builder /build/pyproject.toml /app/pyproject.toml
+
+WORKDIR /app
+
+# Create directories for reports and session DB
+RUN mkdir -p /tmp/volmcp_reports /tmp/volmcp_sessions
+
+# Copy entrypoint
+COPY docker/entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+# Expose SSE port
+EXPOSE 8765
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD curl -f http://localhost:8765/health || exit 1
+
+# Default environment
+ENV VOLMCP_DEFAULT_PROVIDER=yfinance \
+    VOLMCP_SESSION_BACKEND=sqlite \
+    VOLMCP_SESSION_DB=/data/volmcp_sessions.db \
+    VOLMCP_REPORT_DIR=/tmp/volmcp_reports \
+    PYTHONPATH=/app
+
+# Volume for persistent session DB
+VOLUME ["/data"]
+
+ENTRYPOINT ["/entrypoint.sh"]
+CMD ["--transport", "sse", "--host", "0.0.0.0", "--port", "8765"]
+
+
+####################################################################################################
+# FILE 12
+# PATH: docker/docker-compose.yml
+####################################################################################################
+
+# ── Volatility MCP — Docker Compose ─────────────────────────────────
+#
+# Usage:
+#   docker compose -f docker/docker-compose.yml up -d
+#   docker compose -f docker/docker-compose.yml logs -f
+#   docker compose -f docker/docker-compose.yml down
+#
+# Services:
+#   mcp  — The Volatility MCP server (SSE transport on :8765)
+#   redis — Optional Redis for multi-worker session cache (not used by default)
+
+services:
+  mcp:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: volatility-mcp
+    ports:
+      - "8765:8765"
+    environment:
+      - VOLMCP_DEFAULT_PROVIDER=yfinance
+      - VOLMCP_SESSION_BACKEND=sqlite
+      - VOLMCP_SESSION_DB=/data/volmcp_sessions.db
+      - VOLMCP_REPORT_DIR=/tmp/volmcp_reports
+      # Uncomment to use Alpha Vantage instead of yfinance:
+      # - VOLMCP_DEFAULT_PROVIDER=alpha_vantage
+      # - VOLMCP_ALPHA_VANTAGE_API_KEY=${ALPHA_VANTAGE_API_KEY}
+    volumes:
+      - mcp-data:/data
+      - mcp-reports:/tmp/volmcp_reports
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8765/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # ── Optional: Redis for multi-worker deployments ─────────────────
+  # Uncomment if running multiple MCP workers that need shared session state
+  # redis:
+  #   image: redis:7-alpine
+  #   container_name: volatility-redis
+  #   ports:
+  #     - "6379:6379"
+  #   volumes:
+  #     - redis-data:/data
+  #   restart: unless-stopped
+
+volumes:
+  mcp-data:
+  mcp-reports:
+  # redis-data:
+
+
+####################################################################################################
+# FILE 13
+# PATH: docker/entrypoint.sh
+####################################################################################################
+
+#!/bin/bash
+# ── Volatility MCP — Docker Entrypoint ──────────────────────────────
+#
+# Runs database migrations (if using SQLite/DuckDB backend) and then
+# starts the MCP server with the specified transport.
+set -euo pipefail
+
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo " Volatility MCP Server"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo ""
+echo " Python:        $(python --version 2>&1)"
+echo " Working dir:   $(pwd)"
+echo " Session backend: ${VOLMCP_SESSION_BACKEND:-memory}"
+echo " Report dir:    ${VOLMCP_REPORT_DIR:-/tmp/volmcp_reports}"
+echo ""
+
+# Ensure directories exist
+mkdir -p "${VOLMCP_REPORT_DIR:-/tmp/volmcp_reports}"
+mkdir -p "$(dirname "${VOLMCP_SESSION_DB:-/tmp/volmcp_sessions.db}")"
+
+# If using SQLite backend, initialize the database
+if [ "${VOLMCP_SESSION_BACKEND:-memory}" = "sqlite" ]; then
+    echo "Initializing SQLite session store at ${VOLMCP_SESSION_DB}..."
+    python -c "
+from session_store.store import PersistentSessionStore
+store = PersistentSessionStore(db_path='${VOLMCP_SESSION_DB:-/tmp/volmcp_sessions.db}')
+print('  ✓ Database initialized')
+store.close(store.open())  # create + immediately close a test session
+" || echo "  ⚠ Database initialization skipped (will create on first use)"
+fi
+
+echo ""
+echo "Starting MCP server..."
+echo ""
+
+# Execute the main command (passed CMD args)
+exec python -m mcp_server.server "$@"
+
+
+####################################################################################################
+# FILE 14
+# PATH: docs/ARCHITECTURE.md
+####################################################################################################
+
+# Architecture
+
+> See also: [FEEDBACK_LOOP.md](FEEDBACK_LOOP.md), [PREFLIGHT_CHECKS.md](PREFLIGHT_CHECKS.md)
+
+## Overview
+
+The Volatility MCP is a **layered** system. Each layer has a single
+responsibility and depends only on the layer below it.
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│  PRESENTATION LAYER                                                 │
+│  Claude Desktop · Streamlit · REST clients · Jupyter notebooks     │
+└────────────────────────────────┬────────────────────────────────────┘
+                                 │ MCP protocol (stdio / SSE / HTTP)
+┌────────────────────────────────▼────────────────────────────────────┐
+│  PROTOCOL LAYER                                                     │
+│  FastMCP server                                                     │
+│  • 18+ tools (callable by LLM)                                     │
+│  • 5+ resources (read-only context)                                │
+│  • 3 prompts (workflow templates)                                  │
+└────────────────────────────────┬────────────────────────────────────┘
+                                 │ Python function calls
+┌────────────────────────────────▼────────────────────────────────────┐
+│  ENGINE LAYER (core/)                                              │
+│  • preflight/  (12 statistical gates)                             │
+│  • diagnostics/ (residual tests)                                   │
+│  • models/     (ARCH → EGARCH, EWMA, multivariate, ML)            │
+│  • optimize/   (order, distribution, window, refit selectors)      │
+│  • risk/       (VaR, ES, Basel, stressed, scenario)               │
+│  • backtest/   (Kupiec, Christoffersen, DQ, traffic light)       │
+│  • feedback/   (session, state machine, advisor, DAG)            │
+│  • reporting/  (Excel, PDF, Markdown)                             │
+└────────────────────────────────┬────────────────────────────────────┘
+                                 │ SQL + parquet
+┌────────────────────────────────▼────────────────────────────────────┐
+│  STORAGE LAYER                                                      │
+│  • session_store/ (SQLite + parquet blobs)                        │
+│  • In-memory cache (default)                                       │
+│  • Redis (optional, for multi-worker)                             │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+## Design principles
+
+1. **No model runs before pre-flight gates pass.** The Engle ARCH-LM
+   test is the most important check — if it fails, the entire GARCH
+   family is statistically unjustified and `models.fit` blocks.
+
+2. **Inputs are optimized, not guessed.** `(p,q)`, distribution, window
+   size, and refit frequency are chosen by information criteria (AIC,
+   QLIKE, conditional-coverage p-value).
+
+3. **Every tool returns `next_actions[]`.** The agent reads this list
+   and decides the next call. `feedback.get_next_action` provides an
+   explicit recommendation with suggested args.
+
+4. **The feedback loop iterates.** If diagnostics fail → return to
+   `optimize.*` or `models.fit`. If backtests fail → return to
+   `optimize.refit` or `optimize.window`. The loop continues until all
+   tests pass or the agent decides to stop.
+
+5. **Core is framework-agnostic.** The `core/` package contains zero
+   MCP-protocol code. It can be used from a CLI, a Jupyter notebook, a
+   REST API, or the MCP server — all without modification.
+
+## Data flow
+
+```
+User: "Analyze Reliance volatility"
+    │
+    ▼
+Agent calls: open_session → load_market(RELIANCE.NS, 5y)
+    │                    │
+    │                    ▼
+    │              core/data/service.py → yfinance → 1234 returns
+    │
+    ▼
+Agent calls: run_preflight
+    │              │
+    │              ▼
+    │        core/preflight/orchestrator.py
+    │        runs 12 checks → GateResult{overall: pass, ...}
+    │
+    ▼
+Agent calls: get_next_action → advisor says "optimize.order"
+    │
+    ▼
+Agent calls: optimize_order → AIC sweep → optimal (p=1, q=1)
+    │
+    ▼
+Agent calls: fit_model(GARCH, p=1, q=1, dist=t)
+    │              │
+    │              ▼
+    │        core/models/univariate/arch_family.py → arch.arch_model.fit()
+    │        → FitResult{params, conditional_volatility, std_resid, AIC, ...}
+    │
+    ▼
+Agent calls: run_diagnostics
+    │              │
+    │              ▼
+    │        core/diagnostics/ → LB, ARCH-LM, JB, sign-bias, Nyblom
+    │        → if ARCH-LM p < 0.05: recommend re-optimize
+    │
+    ▼ (feedback loop — if diagnostics fail, go back to optimize/fit)
+    │
+Agent calls: compute_var → core/risk/var/parametric.py → VaR = ₹234,000
+    │
+    ▼
+Agent calls: rolling_backtest → coverage_scorecard
+    │              │
+    │              ▼
+    │        if Kupiec p < 0.05: recommend optimize.refit → loop back
+    │
+    ▼ (feedback loop — if backtest fails, re-tune refit)
+    │
+Agent calls: build_excel + build_markdown → reports
+    │
+    ▼
+Agent calls: explain_decision → full audit trail → user
+```
+
+## Scaling options
+
+| Scale | Backend | Transport | Session store |
+|---|---|---|---|
+| Single user (Claude Desktop) | yfinance | stdio | In-memory |
+| Small team | yfinance + CSV | SSE | SQLite |
+| Multi-worker | yfinance + Alpha Vantage | SSE + Nginx | SQLite + Redis cache |
+| Enterprise | Bloomberg + Polygon | streamable-http + K8s | DuckDB + S3 |
+
+
+####################################################################################################
+# FILE 15
+# PATH: docs/FEEDBACK_LOOP.md
+####################################################################################################
+
+# The Feedback Loop
+
+> How the iterative workflow works in the Volatility MCP.
+
+## Why a feedback loop?
+
+Traditional analytics tools are **single-shot**: the user provides
+inputs, the tool produces outputs, and if the outputs are wrong the
+user must re-run with different inputs. This is fragile because:
+
+- Financial data has **stylized facts** (clustering, fat tails, leverage)
+  that require specific model choices.
+- The **right model** depends on the data — you can't know in advance
+  whether GARCH or EGARCH is better.
+- **Backtests fail** when the model is mis-calibrated, and the fix
+  (shorter refit, heavier tail, different order) is data-dependent.
+
+The MCP server solves this by making every tool call return
+`next_actions[]` and `recommendations[]`. The agent reads these and
+decides the next step. If diagnostics fail, the loop returns to
+optimize. If backtests fail, the loop returns to re-tune. This
+continues until all tests pass or the agent decides to stop.
+
+## The workflow DAG
+
+```
+        empty ──data──▶ data ──preflight──▶ preflight
+                                              │
+                                   (block? → explain_gate)
+                                              │
+                                              ▼
+                                          optimize ──fit──▶ fit
+                                              ▲              │
+                                              │              ▼
+                                              └──────────compare
+                                                              │
+                                                              ▼
+                                                            risk
+                                                              │
+                                                              ▼
+                                                          backtest
+                                                              │
+                                                ┌─────────────┤
+                                                ▼             ▼
+                                          (fail → re-tune)  report
+                                                │             │
+                                                └──▶ optimize │
+                                                    (loop)    │
+                                                              ▼
+                                                        explain_decision
+```
+
+## Session state
+
+Every tool call takes a `session_id`. The session stores:
+
+| Attribute | Type | Purpose |
+|---|---|---|
+| `returns` | pd.Series | The loaded return series |
+| `preflight_result` | GateResult | 12-check aggregated result |
+| `optimization_results` | dict[str, OptimizationResult] | Per-input optimum |
+| `fitted_models` | dict[str, FitResult] | All fitted models |
+| `diagnostics_results` | dict[str, dict] | Per-model diagnostics |
+| `backtest_results` | dict[str, ModelBacktestResult] | Walk-forward results |
+| `risk_results` | dict[str, dict] | VaR / ES / Basel results |
+| `coverage_scorecard` | list[dict] | Combined backtest verdict |
+| `decision_log` | DecisionLog | Append-only audit trail |
+| `current_stage` | str | Where in the DAG we are |
+
+## The advisor
+
+`feedback.get_next_action(session_id)` inspects the session and returns:
+
+```json
+{
+  "recommended_action": "models.fit",
+  "suggested_args": {"model": "EGARCH", "p": 1, "q": 1, "dist": "t"},
+  "rationale": "Preflight passed and order/distribution optimized.",
+  "alternatives": [
+    {"action": "models.fit", "args": {"model": "GARCH"},
+     "why": "Try symmetric GARCH first for comparison"}
+  ],
+  "blocked_actions": [
+    {"action": "diagnostics.run", "reason": "No fitted model yet"}
+  ],
+  "current_stage": "optimize",
+  "decision_count": 5
+}
+```
+
+## Heuristic recommendations
+
+The advisor uses both **state-machine logic** (which stage are we in?)
+and **heuristic rules** (what do the test results say?):
+
+| Condition | Recommendation |
+|---|---|
+| Preflight `arch_effect` = block | Use EWMA; do NOT fit GARCH |
+| Preflight `normality` = block | Use Student-t distribution |
+| Preflight `leverage_asymmetry` = pass | Try GJR-GARCH or EGARCH |
+| Diagnostics: LB(r²) p < 0.05 | Increase q; try FIGARCH |
+| Diagnostics: ARCH-LM p < 0.05 | Model misspecified |
+| Diagnostics: JB p < 0.01 | Switch distribution |
+| Diagnostics: sign-bias p < 0.05 | Try GJR/EGARCH |
+| Backtest: Kupiec p < 0.05 | Re-tune distribution or window |
+| Backtest: Christoffersen p < 0.05 | Shorten refit interval |
+| Backtest: Traffic light = red | Capital multiplier 4.0× |
+
+## Example loop
+
+```
+Agent:   load_market(^NSEI, 5y)
+MCP:     ✓ 1234 obs loaded. next_actions=["preflight.run"]
+
+Agent:   run_preflight()
+MCP:     ⚠ overall=warn (normality blocked, leverage detected)
+         recommendations: ["Use Student-t", "Try GJR-GARCH or EGARCH"]
+         next_actions=["optimize.distribution", "optimize.order"]
+
+Agent:   optimize_distribution()
+MCP:     ✓ Best: Student-t (AIC=3412 vs Normal AIC=3445)
+
+Agent:   optimize_order()
+MCP:     ✓ Best: p=1, q=1 (AIC=3412)
+
+Agent:   fit_model(GARCH, p=1, q=1, dist=t)
+MCP:     ✓ Converged. next_actions=["diagnostics.run", "compare.run"]
+
+Agent:   run_diagnostics(model="GARCH")
+MCP:     ⚠ ARCH-LM p=0.03 (remaining ARCH at lag 10)
+         recommendation: "Increase q or try EGARCH"
+         next_actions=["optimize.order", "models.fit"]
+
+Agent:   fit_model(EGARCH, p=1, q=1, dist=t)   ← feedback loop iterates
+MCP:     ✓ Converged. ARCH-LM p=0.21 (clean).
+
+Agent:   compute_var(model="EGARCH", method="student_t")
+MCP:     ✓ VaR = ₹234,000
+
+Agent:   rolling_backtest(models=["EGARCH"])
+         → coverage_scorecard
+MCP:     ✓ Kupiec p=0.42, CC p=0.31, zone=green
+         next_actions=["report.excel"]
+
+Agent:   build_excel()
+MCP:     ✓ Report saved to /tmp/volmcp_reports/volatility_report.xlsx
+
+Agent:   explain_decision()
+MCP:     Full audit trail of 8 decisions...
+```
+
+The loop is **not** infinite — the agent can stop at any point, and
+the advisor will never recommend the same action twice without a
+config change.
+
+
+####################################################################################################
+# FILE 16
+# PATH: docs/PREFLIGHT_CHECKS.md
+####################################################################################################
+
+# Pre-flight Checks
+
+> Every gate explained. See also: [TEST_CATALOG.md](TEST_CATALOG.md) for the full statistical test reference.
+
+## Why pre-flight?
+
+GARCH models are **not** universally applicable. If the data has no
+ARCH effect, fitting GARCH is statistical malpractice. If the data has
+structural breaks, a single-regime model will produce misleading
+forecasts. The pre-flight layer catches these issues **before** any
+model is fit, and blocks the fit if necessary.
+
+## The 12 checks
+
+### 1. Sample size
+
+| | |
+|---|---|
+| **Test** | Count of observations |
+| **Pass** | n ≥ 500 |
+| **Warn** | 300 ≤ n < 500 |
+| **Block** | n < 300 |
+| **Why** | MLE needs enough data for stable parameter estimation. EGARCH is especially data-hungry. |
+
+### 2. Missing data
+
+| | |
+|---|---|
+| **Test** | Consecutive-day gaps in the index |
+| **Pass** | No gap > 10 days |
+| **Warn** | Gap > 10 days or > 5% missing |
+| **Block** | (never blocks — only warns) |
+| **Why** | Large gaps suggest data-feed issues, holidays, or delistings. |
+
+### 3. Outliers
+
+| | |
+|---|---|
+| **Test** | Hampel filter (rolling median + MAD, window=21) |
+| **Pass** | ≤ 20 outliers > 5 MAD |
+| **Warn** | > 20 outliers or > 2% of sample |
+| **Block** | (never blocks) |
+| **Why** | Outliers disproportionately influence MLE. Consider winsorizing or Student-t. |
+
+### 4. Zero / infinity
+
+| | |
+|---|---|
+| **Test** | Count of `inf`, `nan`, and `0` values |
+| **Pass** | No inf, < 10% zeros |
+| **Warn** | > 10% zeros (illiquid series) |
+| **Block** | Any inf (WTI April-2020 case) |
+| **Why** | Log returns are undefined for non-positive prices. |
+
+### 5. Stationarity
+
+| | |
+|---|---|
+| **Test** | ADF (H0: unit root) + KPSS (H0: stationary) |
+| **Pass** | ADF p < 0.10 or KPSS p > 0.05 |
+| **Warn** | Both tests suggest non-stationarity |
+| **Block** | (never blocks — only warns) |
+| **Why** | Returns should be stationary. If not, difference the series. |
+
+### 6. Structural break
+
+| | |
+|---|---|
+| **Test** | CUSUM on squared returns (Brownian-bridge asymptotics) |
+| **Pass** | Max CUSUM ≤ 1.36 (5% critical value) |
+| **Warn** | Max CUSUM > 1.36 |
+| **Block** | (never blocks) |
+| **Why** | A regime change (e.g. COVID crash) invalidates single-regime models. Split the sample or use a dummy. |
+
+### 7. ARCH effect (Engle LM) — THE MOST CRITICAL CHECK
+
+| | |
+|---|---|
+| **Test** | Engle ARCH-LM (lag=10) |
+| **Pass** | p < 0.10 (ARCH effect present) |
+| **Warn** | (never warns) |
+| **Block** | p ≥ 0.10 (no ARCH effect) |
+| **Why** | If there is no ARCH effect, the entire GARCH family is statistically unjustified. Use EWMA or constant volatility instead. |
+
+### 8. Volatility clustering
+
+| | |
+|---|---|
+| **Test** | Ljung-Box on r² (lag=10) |
+| **Pass** | p < 0.10 (clustering present) |
+| **Warn** | (never warns) |
+| **Block** | p ≥ 0.10 (no clustering) |
+| **Why** | GARCH models volatility clustering. If there is none, GARCH adds no value. |
+
+### 9. Normality
+
+| | |
+|---|---|
+| **Test** | Jarque-Bera + Shapiro-Wilk |
+| **Pass** | JB p ≥ 0.05 |
+| **Warn** | 0.001 < JB p < 0.05 |
+| **Block** | JB p < 0.001 |
+| **Why** | If normality is strongly rejected, Normal innovations are inappropriate. Use Student-t. |
+
+### 10. Mean specification
+
+| | |
+|---|---|
+| **Test** | Ljung-Box on constant-mean residuals (lag=10) |
+| **Pass** | p ≥ 0.05 (constant mean adequate) |
+| **Warn** | p < 0.05 (serial correlation in mean) |
+| **Block** | (never blocks) |
+| **Why** | If the mean has serial correlation, add AR/ARMA terms. |
+
+### 11. Leverage asymmetry
+
+| | |
+|---|---|
+| **Test** | Sign-bias test (regress r² on indicator(r<0)) |
+| **Pass** | p < 0.05 (leverage detected) |
+| **Warn** | (never warns) |
+| **Block** | (never blocks) |
+| **Why** | If leverage is detected, symmetric GARCH misses it. Try GJR-GARCH or EGARCH. |
+
+### 12. Frequency adequacy
+
+| | |
+|---|---|
+| **Test** | Infer frequency from median gap; check min obs |
+| **Pass** | Daily ≥ 250, Weekly ≥ 60, Monthly ≥ 36 |
+| **Warn** | Below minimum for the inferred frequency |
+| **Block** | (never blocks) |
+| **Why** | Weekly/monthly data needs more history for stable MLE. |
+
+## Gate aggregation
+
+```
+If any check = BLOCK → overall = BLOCK (models.fit refuses)
+Else if any check = WARN → overall = WARN (models.fit proceeds with caveats)
+Else → overall = PASS
+```
+
+## What happens when blocked?
+
+- `models.fit` returns a `blocked` status with the list of blocking checks.
+- The agent should call `preflight.explain_gate(check_name)` to understand
+  each block and propose a fix.
+- After fixing (e.g. switching distribution, extending history), re-run
+  `preflight.run` and try again.
+- `force=True` bypasses blocks but logs the decision for audit.
+
+
+####################################################################################################
+# FILE 17
+# PATH: docs/INPUT_OPTIMIZATION.md
+####################################################################################################
+
+# Input Optimization
+
+> How each model input is tuned — no guesswork, just information criteria.
+
+## Philosophy
+
+The user (or the LLM agent) should never guess `p`, `q`, distribution,
+window size, or refit frequency. Each input has a dedicated optimizer
+that sweeps a search space and picks the optimum by an objective
+criterion. The full sweep table is returned so the choice can be
+explained.
+
+## What gets optimized
+
+| Input | Optimizer | Objective | Search space | Default |
+|---|---|---|---|---|
+| (p, q) orders | `optimize.order` | AIC (or BIC) | p∈[1..3], q∈[0..2] | (1, 1) |
+| Distribution | `optimize.distribution` | AIC | {normal, t, ged, skewt, jsu} | t |
+| Mean spec | `optimize.mean` | Ljung-Box p on residuals | {Constant, AR(1), ARMA(1,1)} | Constant |
+| Rolling window | `optimize.window` | Out-of-sample QLIKE | 10–63 days, step 5 | 21 |
+| Refit frequency | `optimize.refit` | Conditional-coverage p | 1–30, step 5 | 10 |
+| Forecast horizon | `optimize.horizon` | Use-case rule | — | 10 (regulatory) |
+
+## AIC vs BIC
+
+| Criterion | Penalty | When to prefer |
+|---|---|---|
+| AIC | 2k | Prediction (default) |
+| BIC | k log(n) | True-model identification |
+| HQIC | 2k log log(n) | Compromise |
+
+**Rule of thumb (ΔAIC):**
+- Δ < 2: both models have substantial support — prefer simpler
+- Δ 4–7: less support for the more complex
+- Δ > 10: essentially no support for the more complex
+
+## Distribution selection
+
+The pre-flight normality check provides the initial hint:
+
+| Normality status | Recommended distribution |
+|---|---|
+| PASS | Normal (but Student-t rarely hurts) |
+| WARN | Student-t |
+| BLOCK | Student-t (mandatory) or skew-t |
+
+The optimizer confirms this by fitting each candidate and comparing AIC.
+
+## Window selection
+
+QLIKE is the preferred loss function for volatility-forecast evaluation
+(Patton 2011). It is robust to noise in the realized-variance proxy
+(squared returns).
+
+```
+QLIKE = mean[ log(σ²) + r²/σ² ]
+```
+
+Lower QLIKE = better forecast. The optimizer sweeps window sizes and
+picks the one minimizing QLIKE on an out-of-sample window.
+
+## Refit frequency
+
+The refit optimizer sweeps "refit every N observations" and picks the
+N that maximizes the conditional-coverage p-value from the backtest.
+
+- Lower N → adapts faster to regime shifts but costs more compute
+- Higher N → faster but may lag regime changes
+
+The optimizer finds the sweet spot automatically.
+
+## Horizon selection
+
+Horizon is not optimized — it's chosen by use case:
+
+| Use case | Horizon |
+|---|---|
+| regulatory (Basel) | 10 days |
+| weekly | 5 days |
+| monthly | 21 days |
+| stress | 60 days |
+| auto | half-life of squared-return ACF |
+
+
+####################################################################################################
+# FILE 18
+# PATH: docs/MODEL_CATALOG.md
+####################################################################################################
+
+# Model Catalog
+
+> When to use which model. See also: [DECISION_RULES.md](DECISION_RULES.md).
+
+## Univariate
+
+| Model | Family | Asymmetry | Persistence | Best for |
+|---|---|---|---|---|
+| ARCH(p) | ARCH | None | Short | Teaching; short memory |
+| GARCH(1,1) | GARCH | None | β + α | Industry workhorse |
+| GJR-GARCH | GARCH | Threshold (γ>0) | β + α + γ/2 | Leverage detected |
+| EGARCH | EGARCH | Smooth (γ<0) | β | Leverage + positivity |
+| FIGARCH | FIGARCH | None | Long memory | Long-memory vol |
+| IGARCH | IGARCH | None | = 1 (non-stat.) | Use with extreme caution |
+| EWMA | — | None | λ (imposed) | RiskMetrics; no MLE |
+| HARCH | HARCH | None | Multi-scale | Long memory via multi-lag |
+| Realized-GARCH | — | — | — | Intraday data available |
+| HEAVY | — | — | — | High-frequency-based |
+
+## Multivariate
+
+| Model | Best for |
+|---|---|
+| DCC-GARCH | Time-varying cross-asset correlations |
+| BEKK | Positive-definite covariance without constraints |
+| GO-GARCH | Orthogonal factors drive covariance |
+| Copula-GARCH | Flexible dependence structure |
+
+## Stochastic volatility
+
+| Model | Best for |
+|---|---|
+| Heston | Option pricing (affine SV) |
+| Heston-Nandi | GARCH-like SV with closed-form option pricing |
+| SV-Jumps | Jump-diffusion volatility |
+
+## Machine learning
+
+| Model | Best for |
+|---|---|
+| LSTM-Vol | Nonlinear patterns in squared returns |
+| Transformer-Vol | Long-context attention |
+| TFT | Multi-horizon with covariates |
+
+## Innovation distributions
+
+| Distribution | Skew | Kurtosis | Best for |
+|---|---|---|---|
+| Normal | 0 | 0 | Residuals pass JB (rare in finance) |
+| Student-t | 0 | > 0 (ν) | Symmetric heavy tails |
+| GED | 0 | Parameter | Tails heavier or lighter than t |
+| Skew-t | ≠ 0 | > 0 | Skewed + heavy-tailed |
+| JSU | Parameter | Parameter | Very heavy tails with skew |
+| GHD | Parameter | Parameter | Maximum flexibility |
+
+
+####################################################################################################
+# FILE 19
+# PATH: docs/TEST_CATALOG.md
+####################################################################################################
+
+# Test Catalog
+
+> Every statistical test used in pre-flight and diagnostics.
+
+## Pre-flight tests
+
+| # | Test | Null | Block threshold | Why |
+|---|---|---|---|---|
+| 1 | Sample size | — | n < 300 | Insufficient for MLE |
+| 2 | Missing data | — | Gap > 30 days | Data-feed issues |
+| 3 | Outliers (Hampel) | — | > 20 obs > 5σ | Influences MLE |
+| 4 | Zero/infinity | — | Any inf | Log returns undefined |
+| 5 | ADF | Unit root | p > 0.10 | Returns non-stationary |
+| 6 | KPSS | Stationary | p < 0.05 | Non-stationary |
+| 7 | CUSUM (r²) | No break | > 1.36 | Structural break |
+| 8 | Engle ARCH-LM | No ARCH | p > 0.10 | **GARCH unjustified** |
+| 9 | Ljung-Box (r²) | No clustering | p > 0.10 | No clustering |
+| 10 | Jarque-Bera | Normal | p < 0.001 | Use Student-t |
+| 11 | Shapiro-Wilk | Normal | p < 0.05 | Cross-check JB |
+| 12 | Sign-bias | No leverage | p < 0.05 | Try GJR/EGARCH |
+
+## Post-fit diagnostics
+
+| Test | Null | Pass | Failure → |
+|---|---|---|---|
+| Ljung-Box z | No serial corr in std resid | p ≥ 0.05 | Add AR lags |
+| Ljung-Box z² | No remaining ARCH | p ≥ 0.05 | Increase q |
+| ARCH-LM on z | No remaining ARCH | p ≥ 0.05 | Misspecified |
+| Jarque-Bera on z | Normality of std resid | p ≥ 0.05 | Switch dist |
+| Sign-bias on z | No leverage in resid | p ≥ 0.05 | Try GJR/EGARCH |
+| Nyblom stability | Parameter stability | Stable | Regime split |
+
+## Backtest tests
+
+| Test | Null | Pass | Failure → |
+|---|---|---|---|
+| Kupiec POF | Breach rate = expected | p ≥ 0.05 | Re-tune dist/window |
+| Christoffersen | Breaches independent | p ≥ 0.05 | Shorten refit |
+| Conditional coverage | POF + independence | p ≥ 0.05 | Combined |
+| Basel Traffic Light | ≤ 4 breaches / 250 | Green | Yellow/Red → multiplier |
+| Dynamic Quantile | Coverage + independence | p ≥ 0.05 | Most powerful single test |
+| Diebold-Mariano | Equal accuracy | p ≥ 0.05 | Prefer lower-loss model |
+
+## Information criteria
+
+| Criterion | Formula | Penalty | When |
+|---|---|---|---|
+| AIC | -2LL + 2k | Light | Prediction (default) |
+| BIC | -2LL + k log n | Heavy | True model |
+| HQIC | -2LL + 2k log log n | Medium | Compromise |
+
+## Accuracy metrics
+
+| Metric | Formula | Lower better |
+|---|---|---|
+| QLIKE | mean[log σ² + r²/σ²] | ✓ (preferred) |
+| Vol RMSE | sqrt(mean[(r²-σ²)²]) | ✓ |
+| MAE | mean[\|r²-σ²\|] | ✓ |
+| MAFE | mean[\|r-σ\|/σ] | ✓ |
+
+
+####################################################################################################
+# FILE 20
+# PATH: docs/MCP_PROTOCOL.md
+####################################################################################################
+
+# MCP Protocol Surface
+
+> Everything the LLM agent sees: tools, resources, and prompts.
+
+## Tools (18 categories, 40+ individual tools)
+
+### Session
+| Tool | Args | Returns |
+|---|---|---|
+| `open_session` | — | session_id, stage, next_actions |
+| `close_session` | session_id | status |
+| `get_session_state` | session_id | full session state + next_actions |
+| `list_sessions` | — | list of active sessions |
+| `reset_session` | session_id, keep_data | reset session state |
+
+### Data
+| Tool | Args | Returns |
+|---|---|---|
+| `load_market` | session_id, ticker, years, frequency | n_obs, date range, next_actions |
+| `load_csv` | session_id, path, date_column, value_column, is_returns | n_obs, date range |
+| `list_universes` | — | {universe: [instruments]} |
+| `list_assets` | universe? | {name: ticker} |
+
+### Pre-flight
+| Tool | Args | Returns |
+|---|---|---|
+| `run_preflight` | session_id | GateResult (12 checks) |
+| `get_gate_status` | session_id | last GateResult |
+| `explain_gate` | session_id, check_name | plain-language explanation |
+
+### Optimize
+| Tool | Args | Returns |
+|---|---|---|
+| `optimize_order` | session_id, model_family, max_p, max_q, distribution, criterion | optimal (p,q) + sweep |
+| `optimize_distribution` | session_id, model_family, p, q, candidates | optimal dist + sweep |
+| `optimize_mean` | session_id, candidates | optimal mean spec |
+| `optimize_window` | session_id, min, max, step, metric | optimal window |
+| `optimize_refit` | session_id, model_name, min, max, alpha | optimal refit freq |
+| `optimize_horizon` | session_id, target_use | recommended horizon |
+| `get_optimization_summary` | session_id | all optimization results |
+
+### Models
+| Tool | Args | Returns |
+|---|---|---|
+| `list_models` | family? | list of model specs |
+| `fit_model` | session_id, model, p?, q?, o?, distribution?, mean?, force? | fit result |
+| `forecast` | session_id, model, horizon, method, simulations | variance path |
+
+### Diagnostics
+| Tool | Args | Returns |
+|---|---|---|
+| `run_diagnostics` | session_id, model_name | full diagnostic suite |
+| `get_diagnostics` | session_id, model_name | cached diagnostics |
+
+### Compare
+| Tool | Args | Returns |
+|---|---|---|
+| `compare_models` | session_id | scorecard with ranks |
+
+### Risk
+| Tool | Args | Returns |
+|---|---|---|
+| `compute_var` | session_id, model, confidence, horizon, portfolio_value, method | VaR |
+| `compute_es` | session_id, model, confidence, horizon, portfolio_value, method | ES + ES/VaR ratio |
+| `basel_es` | session_id, model, portfolio_value, base_horizon | Basel 97.5% ES |
+| `portfolio_var` | session_id, weights, confidence, portfolio_value, method | marginal/component/incremental |
+
+### Scenario
+| Tool | Args | Returns |
+|---|---|---|
+| `apply_market_shock` | session_id, model, shock_pct, direction | shocked vol forecast |
+| `stressed_var` | session_id, model, confidence, portfolio_value, scenario_name | stressed VaR |
+| `list_stress_scenarios` | — | list of crisis scenarios |
+
+### Backtest
+| Tool | Args | Returns |
+|---|---|---|
+| `rolling_backtest` | session_id, models, confidence, test_fraction, refit_every? | per-model breaches |
+| `backtest_kupiec` | session_id, model | Kupiec stat + p |
+| `backtest_christoffersen` | session_id, model | independence + CC |
+| `backtest_traffic_light` | session_id, model | Basel zone |
+| `backtest_dynamic_quantile` | session_id, model | DQ stat + p |
+| `backtest_diebold_mariano` | session_id, model_a, model_b | DM stat + p |
+| `backtest_coverage_scorecard` | session_id | combined scorecard |
+
+### Report
+| Tool | Args | Returns |
+|---|---|---|
+| `build_excel` | session_id, output_path? | file path |
+| `build_pdf` | session_id, output_path? | file path |
+| `build_markdown` | session_id | markdown content |
+
+### Feedback
+| Tool | Args | Returns |
+|---|---|---|
+| `get_next_action` | session_id, intent? | recommended action + args + alternatives |
+| `explain_decision` | session_id, decision_id? | audit trail |
+| `get_recommendations` | session_id | heuristic recommendations |
+| `list_valid_transitions` | session_id | valid/invalid actions |
+
+## Resources (read-only context)
+
+| URI | Content |
+|---|---|
+| `volatility://methodology` | Master methodology document |
+| `volatility://models/catalog` | Model catalog with specs |
+| `volatility://tests/catalog` | Statistical test catalog |
+| `volatility://distributions/catalog` | Distribution catalog |
+| `volatility://workflows/01_discovery` | Discovery workflow |
+| `volatility://workflows/02_modeling` | Modeling workflow |
+| `volatility://workflows/03_optimization` | Optimization workflow |
+| `volatility://workflows/04_risk` | Risk quantification workflow |
+| `volatility://workflows/05_validation` | Validation & reporting workflow |
+
+## Prompts
+
+| Prompt | Args | Use case |
+|---|---|---|
+| `guided_volatility_analysis` | asset, years | Full guided workflow |
+| `troubleshoot_fit_failure` | model, error | Debug a failed fit |
+| `explain_results_to_student` | audience | Plain-language explanation |
+
+
+####################################################################################################
+# FILE 21
+# PATH: docs/DECISION_RULES.md
+####################################################################################################
+
+# Decision Rules
+
+> When to use which model — a decision tree.
+
+## Decision tree
+
+```
+1. Is there an ARCH effect? (Engle LM p < 0.10)
+   │
+   ├─ NO → Use EWMA or constant volatility. Do NOT fit GARCH.
+   │
+   └─ YES → Continue to step 2.
+       │
+2. Is there leverage / asymmetry? (sign-bias p < 0.05)
+   │
+   ├─ NO → Use symmetric GARCH(1,1). → step 3a
+   │
+   └─ YES → Continue to step 2b.
+       │
+       ├─ Are residuals heavy-tailed? (JB p < 0.001)
+       │   │
+       │   ├─ YES → EGARCH with Student-t. (best for leverage + tails)
+       │   │
+       │   └─ NO  → GJR-GARCH with Student-t.
+       │
+       └─ (if both pass, EGARCH is preferred for its positivity guarantee)
+
+3a. Are residuals heavy-tailed? (JB p < 0.001)
+    │
+    ├─ YES → GARCH(1,1) with Student-t.
+    │
+    └─ NO  → GARCH(1,1) with Normal.
+
+3b. Does the squared-return ACF decay very slowly? (long memory)
+    │
+    ├─ YES → FIGARCH.
+    │
+    └─ NO  → GARCH(1,1).
+
+4. Is the series multivariate (≥ 2 assets)?
+   │
+   └─ YES → DCC-GARCH (for time-varying correlations).
+       │
+       └─ NO → stay with univariate.
+
+5. Is intraday realized variance available?
+   │
+   └─ YES → Realized GARCH or HEAVY (uses RV as a regressor).
+       │
+       └─ NO → stay with daily GARCH.
+
+6. Do you need closed-form option pricing?
+   │
+   └─ YES → Heston or Heston-Nandi.
+       │
+       └─ NO → stay with GARCH family.
+```
+
+## Quick reference table
+
+| Situation | Recommended model | Recommended distribution |
+|---|---|---|
+| No ARCH effect | EWMA (λ=0.94) | Normal |
+| ARCH effect, no leverage, normal resid | GARCH(1,1) | Normal |
+| ARCH effect, no leverage, heavy tails | GARCH(1,1) | Student-t |
+| ARCH effect, leverage, heavy tails | EGARCH | Student-t |
+| ARCH effect, leverage, skew | GJR-GARCH | Skew-t |
+| Long memory in vol | FIGARCH | Student-t |
+| Multivariate | DCC-GARCH | per-asset |
+| Intraday data available | Realized GARCH | — |
+| Option pricing | Heston / Heston-Nandi | — |
+
+## Distribution selection rules
+
+| Residual property | Distribution |
+|---|---|
+| Passes Jarque-Bera | Normal |
+| Fails JB, symmetric | Student-t |
+| Fails JB, skewed | Skew-t |
+| Very heavy tails | JSU or GHD |
+
+## VaR method selection rules
+
+| Situation | VaR method |
+|---|---|
+| Normal residuals, short horizon | Normal parametric |
+| Student-t residuals | Student-t parametric |
+| Skewed residuals | Cornish-Fisher |
+| Non-parametric preference | Historical simulation |
+| Want tail realism + conditional vol | FHS (filtered historical) |
+| Path-dependent scenarios | Monte Carlo |
+| Regulatory reference | Basel 97.5% ES |
+
+## Backtest failure response
+
+| Failed test | Fix |
+|---|---|
+| Kupiec p < 0.05 (wrong breach rate) | Re-tune distribution (heavier tail) or window (shorter) |
+| Christoffersen p < 0.05 (clustering) | Shorten refit interval |
+| DQ p < 0.05 | Switch to FHS or Monte Carlo VaR |
+| Traffic light = red | Capital multiplier 4.0×; fundamental model review |
+| Nyblom unstable | Regime split or rolling refit |
+
+
+====================================================================================================
+END OF FLATTENED SOURCE — examples/ + docs/ + docker/ + root config
+====================================================================================================
+```
+
+---
+
+## What's Now Complete
+
+With these 21 files, the entire `volatility-mcp/` project is fully specified:
+
+| Folder | Files | Status |
+|---|---|---|
+| `mcp_server/` | 35 | ✅ Complete (previous delivery) |
+| `core/` | 104 | ✅ Complete (previous delivery) |
+| `session_store/` | 4 | ✅ Complete (previous delivery) |
+| `tests/` | 22 | ✅ Complete (previous delivery) |
+| `examples/` | 4 | ✅ Complete (this delivery) |
+| `docs/` | 8 | ✅ Complete (this delivery) |
+| `docker/` | 3 | ✅ Complete (this delivery) |
+| Root config | 6 | ✅ Complete (this delivery) |
+| **Total** | **206** | **✅ Full project** |
+
+## How to Restore
+
+Save the block above as `examples_docs_docker_flattened.txt` and run `restore_flattened.py` against it. Combined with the previous three deliveries, the entire project tree will be reconstructed.
+
+## How to Run
+
+```bash
+# 1. Restore all files
+python restore_flattened.py
+
+# 2. Install
+make install-dev
+
+# 3. Test
+make test
+
+# 4. Run examples
+python examples/01_basic_flow.py
+python examples/02_feedback_loop_demo.py
+python examples/03_optimization_walkthrough.py
+
+# 5. Start the MCP server
+make run              # stdio (for Claude Desktop)
+make run-sse          # SSE (for remote access)
+
+# 6. Docker
+make docker-build
+make docker-up

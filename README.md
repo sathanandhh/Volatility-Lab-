@@ -189,6 +189,45 @@ volatility-mcp/
 | [DECISION_RULES.md](docs/DECISION_RULES.md) | Decision tree for model selection |
 
 ---
+## Credits & Intellectual Debt
+
+This project is built on the shoulders of the following thinkers and their work.
+
+**Nassim Nicholas Taleb** — *The Black Swan* (2007), *Dynamic Hedging* (1997),
+*Antifragile* (2012). The pre-flight normality gate, stressed VaR scenarios,
+and the philosophy of iterating toward robustness over point estimates all
+trace back here.
+
+**Robert F. Engle** — ARCH paper (*Econometrica*, 1982). The Engle ARCH-LM
+test is the single most critical pre-flight gate: if it fails, GARCH is blocked.
+
+**Tim Bollerslev** — GARCH(*p,q*) paper (*Journal of Econometrics*, 1986).
+The industry workhorse at the center of the model catalog.
+
+**Nelson (1991), Glosten-Jagannathan-Runkle (1993)** — EGARCH and GJR-GARCH
+respectively. The leverage asymmetry gate recommends these when sign-bias fires.
+
+**Philippe Jorion** — *Value at Risk* (3rd ed., 2006). The parametric,
+historical, and FHS VaR implementations follow his treatment directly.
+
+**Kupiec (1995), Christoffersen (1998), Engle & Manganelli (2004)** — the
+POF, conditional coverage, and Dynamic Quantile backtests that form the
+coverage scorecard.
+
+**Patton (2011)** — established QLIKE as the robust loss function for
+volatility forecast comparison. Default objective in `optimize_window`.
+
+**Diebold & Mariano (1995)** — the DM test used in `backtest_diebold_mariano`
+to compare competing model forecasts.
+
+**Basel Committee on Banking Supervision** — Basel III framework: source of
+the 97.5% ES requirement, 10-day horizon, traffic light zones, and capital
+multiplier rules.
+
+**Kevin Sheppard** — the [`arch`](https://github.com/bashtage/arch) Python
+package that powers all GARCH-family estimation in this project.
+
+---
 
 ## License
 
